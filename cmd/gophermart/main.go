@@ -106,7 +106,7 @@ func run() error {
 		r.Post("/api/user/orders", loyaltyHandler.UploadOrder)
 		r.Get("/api/user/orders", loyaltyHandler.GetUserOrders)
 		r.Get("/api/user/balance", loyaltyHandler.GetBalance)
-		r.Post("/api/user/withdraw", loyaltyHandler.UploadWithdrawal)
+		r.Post("/api/user/balance/withdraw", loyaltyHandler.UploadWithdrawal)
 		r.Get("/api/user/withdrawals", loyaltyHandler.GetUserWithdrawals)
 	})
 
