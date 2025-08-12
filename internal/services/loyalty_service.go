@@ -357,35 +357,39 @@ func (s *LoyaltyService) checkOrderStatus(orderNumber string) {
 		return
 	}
 
-	// Обновляем заказ
-	updatedOrder := models.Order{
-		UserID:     order.UserID,
-		Number:     orderNumber,
-		Status:     models.Status(orderInfo.Status),
-		Accrual:    orderInfo.Accrual,
-		UploadedAt: order.UploadedAt,
-	}
+	//Добавляем начисления и увеличиваем баланс паользователя в одной транзакции
+	err = s.txManager.RunInTransaction(ctx, func(ctx context.Context) error {
+		// Обновляем заказ
+		updatedOrder := models.Order{
+			UserID:     order.UserID,
+			Number:     orderNumber,
+			Status:     models.Status(orderInfo.Status),
+			Accrual:    orderInfo.Accrual,
+			UploadedAt: order.UploadedAt,
+		}
 
-	if err := s.ordersRepo.Update(ctx, &updatedOrder); err != nil {
-		log.Printf("Failed to update order %s: %v", orderNumber, err)
-		return
-	}
+		if err := s.ordersRepo.Update(ctx, &updatedOrder); err != nil {
+			return err
+		}
 
-	// Если статус ещё не финальный - продолжаем проверять
-	if updatedOrder.Status == models.StatusNew || updatedOrder.Status == models.StatusProcessing {
-		time.Sleep(3 * time.Second) // Блокируем текущую горутину
-		s.pendingOrders <- orderNumber
-	} else {
-		// Обновляем баланс пользователя
-		s.updateUserBalance(ctx, order.UserID, updatedOrder.Accrual)
-	}
-}
+		// Если статус ещё не финальный - продолжаем проверять
+		if updatedOrder.Status == models.StatusNew || updatedOrder.Status == models.StatusProcessing {
+			time.Sleep(3 * time.Second) // Блокируем текущую горутину
+			s.pendingOrders <- orderNumber
+		} else {
+			// Обновляем баланс пользователя
+			user, err := s.usersRepo.Get(ctx, order.UserID)
+			if err != nil {
+				return err
+			}
+			user.CurrentPoints += updatedOrder.Accrual
+			_ = s.usersRepo.Update(ctx, user)
+		}
 
-func (s *LoyaltyService) updateUserBalance(ctx context.Context, userID string, amount float32) {
-	user, err := s.usersRepo.Get(ctx, userID)
+		return nil
+	})
+
 	if err != nil {
-		return
+		log.Printf("Failed to update order %s: %v", orderNumber, err)
 	}
-	user.CurrentPoints += amount
-	_ = s.usersRepo.Update(ctx, user)
 }
