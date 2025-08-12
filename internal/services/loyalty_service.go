@@ -89,6 +89,8 @@ func (s *LoyaltyService) taskProcessor() {
 			result, err = s.getUserOrders(task.Context, login)
 		case TaskCreateWithdrawal:
 			withdrawal := task.Payload.(*models.Withdrawal)
+			//До списания проверяем актуальность начислений
+			s.updateAccruals(task.Context, withdrawal.UserID)
 			err = s.createWithdrawal(task.Context, *withdrawal)
 		case TaskGetUserWithdrawals:
 			login := task.Payload.(string)
@@ -251,9 +253,6 @@ func (s *LoyaltyService) createWithdrawal(ctx context.Context, withdrawal models
 		return err
 	}
 
-	//До списания проверяем актуальность начислений
-	s.updateAccruals(ctx, withdrawal.UserID)
-
 	if user.CurrentPoints < withdrawal.Sum {
 		return paymentRequiredError
 	}
@@ -317,7 +316,7 @@ func (s *LoyaltyService) getUserWithdrawals(ctx context.Context, login string) (
 }
 
 func (s *LoyaltyService) updateAccruals(ctx context.Context, userLogin string) error {
-	orders, err := s.GetUserOrders(ctx, userLogin)
+	orders, err := s.getUserOrders(ctx, userLogin)
 	if err != nil {
 		return err
 	}
@@ -336,7 +335,7 @@ func (s *LoyaltyService) updateAccruals(ctx context.Context, userLogin string) e
 				var httpErr *customerrors.HTTPError
 				if !errors.As(err, &httpErr) {
 					httpErr = &customerrors.HTTPError{
-						Code: http.StatusInternalServerError, //Если изначально не HTTPError - запрос не был отправлен
+						Code: http.StatusInternalServerError, //Если изначально не HTTPError - запрос не был отправлен, значит InternalServerError
 						Err:  err,
 					}
 				}

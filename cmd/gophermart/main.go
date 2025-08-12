@@ -69,7 +69,10 @@ func run() error {
 	}
 	defer withdrawalsRepo.CloseConnection()
 
+	//Инициализация клиента для работы с системой рассчёта баллов
 	accrualSystemClient := accrual.NewClient(accrualCalculationRouterAddr, 5*time.Second) //Таймаут 5 секунд
+
+	//Инициализация менеджера транзакций
 	txManager := postgres.NewPgxTransactionManager(db)
 
 	// Инициализация сервисов

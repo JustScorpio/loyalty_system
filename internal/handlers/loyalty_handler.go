@@ -94,7 +94,7 @@ func (h *LoyaltyHandler) Register(w http.ResponseWriter, r *http.Request) {
 		HttpOnly: true,
 	})
 
-	w.WriteHeader(http.StatusCreated)
+	w.WriteHeader(http.StatusOK)
 }
 
 // Аутентификация пользователя

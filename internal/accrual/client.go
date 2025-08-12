@@ -17,7 +17,7 @@ type Client struct {
 	httpClient *http.Client
 }
 
-// New создает клиент с настройками
+// Создать клиент
 func NewClient(baseURL string, timeout time.Duration) *Client {
 	return &Client{
 		baseURL: baseURL,
