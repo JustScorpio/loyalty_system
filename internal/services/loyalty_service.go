@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"log"
-	"net/http"
 	"time"
 
 	"github.com/JustScorpio/loyalty_system/internal/accrual"
@@ -22,7 +21,9 @@ type LoyaltyService struct {
 	withdrawalsRepo repository.IRepository[models.Withdrawal]
 	accrualClient   *accrual.Client
 	txManager       repository.ITransactionManager
-	taskQueue       chan Task // канал-очередь задач
+
+	taskQueue     chan Task   // канал-очередь задач
+	pendingOrders chan string // Канал для новых заказов
 }
 
 type TaskType int
@@ -61,9 +62,11 @@ func NewLoyaltyService(usersRepo repository.IRepository[models.User], ordersRepo
 		accrualClient:   accrualClient,
 		txManager:       txManager,
 		taskQueue:       make(chan Task, 300),
+		pendingOrders:   make(chan string, 300),
 	}
 
 	go service.taskProcessor()
+	go service.ordersAccrualWorker()
 
 	return service
 }
@@ -229,6 +232,9 @@ func (s *LoyaltyService) createOrder(ctx context.Context, order models.Order) er
 		return err
 	}
 
+	// Добавляем заказ в очередь для записи начислений
+	s.pendingOrders <- order.Number
+
 	return nil
 }
 
@@ -313,110 +319,73 @@ func (s *LoyaltyService) getUserWithdrawals(ctx context.Context, login string) (
 	return userWithdrawals, nil
 }
 
-func (s *LoyaltyService) StartAccrualWorker(ctx context.Context, interval time.Duration) {
-	ticker := time.NewTicker(interval)
+func (s *LoyaltyService) ordersAccrualWorker() {
+	ticker := time.NewTicker(10 * time.Second) // Проверка каждые 10 секунд
 	defer ticker.Stop()
 
 	for {
 		select {
-		case <-ctx.Done():
-			fmt.Println("Accrual worker stopped")
-			return
+		case orderNumber := <-s.pendingOrders:
+			s.checkOrderStatus(orderNumber)
 		case <-ticker.C:
-			s.runAccrualUpdate(ctx)
+			//ждём...
 		}
 	}
 }
 
-func (s *LoyaltyService) runAccrualUpdate(ctx context.Context) {
-	// Получаем всех пользователей, которым нужно обновить начисления
-	users, err := s.usersRepo.GetAll(ctx)
-	if err != nil {
-		log.Printf("Failed to get users for accrual update: %v", err)
+func (s *LoyaltyService) checkOrderStatus(orderNumber string) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	// Получаем текущий заказ
+	order, err := s.ordersRepo.Get(ctx, orderNumber)
+	if err != nil || order == nil {
 		return
 	}
 
-	for _, user := range users {
-		// Используем отдельный контекст с таймаутом для каждого пользователя
-		userCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
-		defer cancel()
+	// Проверяем только нужные статусы
+	if order.Status != models.StatusNew && order.Status != models.StatusProcessing {
+		return
+	}
 
-		if err := s.updateAccruals(userCtx, user.Login); err != nil {
-			log.Printf("Failed to update accruals for user %s: %v", user.Login, err)
-			continue
-		}
+	// Запрашиваем обновление статуса
+	orderInfo, err := s.accrualClient.GetOrderInfo(ctx, orderNumber)
+	if err != nil {
+		log.Printf("Failed to check order %s: %v", orderNumber, err)
+		time.Sleep(3 * time.Second)    // Блокируем текущую горутину
+		s.pendingOrders <- orderNumber // Повторяем позже
+		return
+	}
+
+	// Обновляем заказ
+	updatedOrder := models.Order{
+		UserID:     order.UserID,
+		Number:     orderNumber,
+		Status:     models.Status(orderInfo.Status),
+		Accrual:    orderInfo.Accrual,
+		UploadedAt: order.UploadedAt,
+	}
+
+	if err := s.ordersRepo.Update(ctx, &updatedOrder); err != nil {
+		log.Printf("Failed to update order %s: %v", orderNumber, err)
+		return
+	}
+
+	// Если статус ещё не финальный - продолжаем проверять
+	if updatedOrder.Status == models.StatusNew || updatedOrder.Status == models.StatusProcessing {
+		time.Sleep(3 * time.Second) // Блокируем текущую горутину
+		s.pendingOrders <- orderNumber
+	} else {
+		// Обновляем баланс пользователя
+		s.updateUserBalance(ctx, order.UserID, updatedOrder.Accrual)
 	}
 }
 
-func (s *LoyaltyService) updateAccruals(ctx context.Context, userLogin string) error {
-	orders, err := s.getUserOrders(ctx, userLogin)
+func (s *LoyaltyService) updateUserBalance(ctx context.Context, userID string, amount float32) {
+	user, err := s.usersRepo.Get(ctx, userID)
 	if err != nil {
-		return err
+		return
 	}
-
-	user, err := s.usersRepo.Get(ctx, userLogin)
-	if err != nil {
-		return err
-	}
-
-	for _, order := range orders {
-		if order.Status == models.StatusNew || order.Status == models.StatusProcessing {
-			orderInfo, err := s.accrualClient.GetOrderInfo(ctx, order.Number)
-			statusCode := http.StatusOK
-			if err != nil {
-				//Если не HTTPError - создаём HTTPError
-				var httpErr *customerrors.HTTPError
-				if !errors.As(err, &httpErr) {
-					httpErr = &customerrors.HTTPError{
-						Code: http.StatusInternalServerError, //Если изначально не HTTPError - запрос не был отправлен, значит InternalServerError
-						Err:  err,
-					}
-				}
-
-				statusCode = httpErr.Code
-			}
-
-			//Если TooManyRequests - преврать синхронизацию
-			//orderInfo пуст - перейти к следующему заказу
-			if statusCode == http.StatusTooManyRequests {
-				return nil
-			} else if orderInfo == nil {
-				continue
-			}
-
-			updatedOrder := models.Order{
-				UserID:     user.Login,
-				Number:     orderInfo.Order,
-				Accrual:    orderInfo.Accrual,
-				Status:     models.Status(orderInfo.Status),
-				UploadedAt: order.UploadedAt,
-			}
-
-			//В транзакции начислить баллы за заказы И обновить баланс пользователя
-			err = s.txManager.RunInTransaction(ctx, func(ctx context.Context) error {
-				if err = s.ordersRepo.Update(ctx, &updatedOrder); err != nil {
-					return fmt.Errorf("failed to update order: %w", err)
-				}
-
-				//Проверяем что в теле ответа был Accrual (обратное возможно если status != "PROCESSED")
-				if orderInfo.Accrual != 0 {
-					//Изменяем баланс пользователя
-					user.CurrentPoints += order.Accrual
-
-					if err := s.usersRepo.Update(ctx, user); err != nil {
-						return fmt.Errorf("failed to update user balance: %w", err)
-					}
-				}
-
-				return nil
-			})
-
-			//Если внутренняя ошибка - значит что-то серьёзное, прекращаем обработку
-			if err != nil {
-				return customerrors.NewInternalServerError(err)
-			}
-		}
-	}
-
-	return nil
+	user.CurrentPoints += amount
+	_ = s.usersRepo.Update(ctx, user)
 }
