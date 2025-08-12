@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"net/http"
+	"time"
 
 	"github.com/JustScorpio/loyalty_system/internal/accrual"
 	"github.com/JustScorpio/loyalty_system/internal/customerrors"
@@ -78,8 +80,6 @@ func (s *LoyaltyService) taskProcessor() {
 			err = s.createUser(task.Context, *user)
 		case TaskGetUser:
 			login := task.Payload.(string)
-			//До получения данных о пользователе актуализируем баланс
-			s.updateAccruals(task.Context, login)
 			result, err = s.usersRepo.Get(task.Context, login)
 		case TaskCreateOrder:
 			order := task.Payload.(*models.Order)
@@ -89,8 +89,6 @@ func (s *LoyaltyService) taskProcessor() {
 			result, err = s.getUserOrders(task.Context, login)
 		case TaskCreateWithdrawal:
 			withdrawal := task.Payload.(*models.Withdrawal)
-			//До списания проверяем актуальность начислений
-			s.updateAccruals(task.Context, withdrawal.UserID)
 			err = s.createWithdrawal(task.Context, *withdrawal)
 		case TaskGetUserWithdrawals:
 			login := task.Payload.(string)
@@ -313,6 +311,41 @@ func (s *LoyaltyService) getUserWithdrawals(ctx context.Context, login string) (
 	}
 
 	return userWithdrawals, nil
+}
+
+func (s *LoyaltyService) StartAccrualWorker(ctx context.Context, interval time.Duration) {
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			fmt.Println("Accrual worker stopped")
+			return
+		case <-ticker.C:
+			s.runAccrualUpdate(ctx)
+		}
+	}
+}
+
+func (s *LoyaltyService) runAccrualUpdate(ctx context.Context) {
+	// Получаем всех пользователей, которым нужно обновить начисления
+	users, err := s.usersRepo.GetAll(ctx)
+	if err != nil {
+		log.Printf("Failed to get users for accrual update: %v", err)
+		return
+	}
+
+	for _, user := range users {
+		// Используем отдельный контекст с таймаутом для каждого пользователя
+		userCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+		defer cancel()
+
+		if err := s.updateAccruals(userCtx, user.Login); err != nil {
+			log.Printf("Failed to update accruals for user %s: %v", user.Login, err)
+			continue
+		}
+	}
 }
 
 func (s *LoyaltyService) updateAccruals(ctx context.Context, userLogin string) error {

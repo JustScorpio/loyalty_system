@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"net/http"
@@ -77,6 +78,11 @@ func run() error {
 
 	// Инициализация сервисов
 	loyaltyService := services.NewLoyaltyService(usersRepo, ordersRepo, withdrawalsRepo, accrualSystemClient, txManager)
+
+	// Запускаем воркер с интервалом 30 секунд
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go loyaltyService.StartAccrualWorker(ctx, 30*time.Second)
 
 	// Инициализация обработчиков
 	loyaltyHandler := handlers.NewLoyaltyHandler(loyaltyService)
