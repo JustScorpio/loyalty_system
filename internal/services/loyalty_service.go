@@ -383,7 +383,10 @@ func (s *LoyaltyService) checkOrderStatus(orderNumber string) {
 				return err
 			}
 			user.CurrentPoints += updatedOrder.Accrual
-			_ = s.usersRepo.Update(ctx, user)
+			err = s.usersRepo.Update(ctx, user)
+			if err != nil {
+				return err
+			}
 		}
 
 		return nil
