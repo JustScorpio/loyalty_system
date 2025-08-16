@@ -1,4 +1,4 @@
-package service_tasks_dispatcher
+package infrastructure
 
 import "context"
 

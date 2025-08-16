@@ -9,7 +9,7 @@ import (
 
 	"github.com/JustScorpio/loyalty_system/internal/accrual"
 	"github.com/JustScorpio/loyalty_system/internal/customerrors"
-	dispatcher "github.com/JustScorpio/loyalty_system/internal/infrastructure/service_tasks_dispatcher"
+	dispatcher "github.com/JustScorpio/loyalty_system/internal/infrastructure"
 	"github.com/JustScorpio/loyalty_system/internal/models"
 	"github.com/JustScorpio/loyalty_system/internal/repository"
 	"github.com/JustScorpio/loyalty_system/internal/utils/auth/validation"
