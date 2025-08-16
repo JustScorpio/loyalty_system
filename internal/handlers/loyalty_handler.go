@@ -9,9 +9,9 @@ import (
 
 	"github.com/JustScorpio/loyalty_system/internal/customcontext"
 	"github.com/JustScorpio/loyalty_system/internal/customerrors"
-	"github.com/JustScorpio/loyalty_system/internal/middleware/auth" //В файле middleware не только сама middleware, но и ауфные функции и константы
 	"github.com/JustScorpio/loyalty_system/internal/models"
 	"github.com/JustScorpio/loyalty_system/internal/services"
+	"github.com/JustScorpio/loyalty_system/internal/utils/auth" //В файле middleware не только сама middleware, но и ауфные функции и константы
 )
 
 type LoyaltyHandler struct {

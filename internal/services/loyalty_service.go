@@ -11,7 +11,7 @@ import (
 	"github.com/JustScorpio/loyalty_system/internal/customerrors"
 	"github.com/JustScorpio/loyalty_system/internal/models"
 	"github.com/JustScorpio/loyalty_system/internal/repository"
-	"github.com/JustScorpio/loyalty_system/internal/utils"
+	"github.com/JustScorpio/loyalty_system/internal/utils/auth/validation"
 )
 
 type LoyaltyService struct {
@@ -213,7 +213,7 @@ func (s *LoyaltyService) createOrder(ctx context.Context, order models.Order) er
 
 	number := order.Number
 
-	if !utils.LuhnValidate(number) {
+	if !validation.LuhnValidate(number) {
 		return unprocessableEntityError
 	}
 
@@ -242,7 +242,7 @@ func (s *LoyaltyService) createWithdrawal(ctx context.Context, withdrawal models
 
 	order := withdrawal.Order
 
-	if !utils.LuhnValidate(order) {
+	if !validation.LuhnValidate(order) {
 		return unprocessableEntityError
 	}
 

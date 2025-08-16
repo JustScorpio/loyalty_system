@@ -9,9 +9,7 @@ import (
 
 	"github.com/JustScorpio/loyalty_system/internal/accrual"
 	"github.com/JustScorpio/loyalty_system/internal/handlers"
-	"github.com/JustScorpio/loyalty_system/internal/middleware/auth"
-	"github.com/JustScorpio/loyalty_system/internal/middleware/gzipencoder"
-	"github.com/JustScorpio/loyalty_system/internal/middleware/logger"
+	"github.com/JustScorpio/loyalty_system/internal/middleware"
 	"github.com/JustScorpio/loyalty_system/internal/repository/postgres"
 	"github.com/JustScorpio/loyalty_system/internal/services"
 	"github.com/go-chi/chi"
@@ -82,7 +80,7 @@ func run() error {
 	loyaltyHandler := handlers.NewLoyaltyHandler(loyaltyService)
 
 	//Инициализация логгера
-	zapLogger, err := logger.NewLogger("Info", true)
+	zapLogger, err := middleware.NewLogger("Info", true)
 	if err != nil {
 		return err
 	}
@@ -91,8 +89,8 @@ func run() error {
 	r := chi.NewRouter()
 
 	//Базовые middleware
-	r.Use(logger.LoggingMiddleware(zapLogger))
-	r.Use(gzipencoder.GZIPEncodingMiddleware())
+	r.Use(middleware.LoggingMiddleware(zapLogger))
+	r.Use(middleware.GZIPEncodingMiddleware())
 
 	//Публичные маршруты
 	r.Group(func(r chi.Router) {
@@ -102,7 +100,7 @@ func run() error {
 
 	//Защищённые маршруты с auth middleware
 	r.Group(func(r chi.Router) {
-		r.Use(auth.AuthMiddleware())
+		r.Use(middleware.AuthMiddleware())
 		r.Post("/api/user/orders", loyaltyHandler.UploadOrder)
 		r.Get("/api/user/orders", loyaltyHandler.GetUserOrders)
 		r.Get("/api/user/balance", loyaltyHandler.GetBalance)
