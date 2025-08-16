@@ -84,10 +84,6 @@ func (r *PgOrdersRepo) Delete(ctx context.Context, number string) error {
 	return err
 }
 
-func (r *PgOrdersRepo) CloseConnection() {
-	r.db.Close(context.Background())
-}
-
 func (r *PgOrdersRepo) PingDB() bool {
 	err := r.db.Ping(context.Background())
 	return err == nil

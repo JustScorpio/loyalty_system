@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"net/http"
@@ -49,23 +50,21 @@ func run() error {
 	if err != nil {
 		return err
 	}
+	defer db.Close(context.Background())
 
 	// Инициализация репозиториев с базой данных
 	usersRepo, err := postgres.NewPgUsersRepo(db)
 	if err != nil {
 		return err
 	}
-	defer usersRepo.CloseConnection()
 	ordersRepo, err := postgres.NewPgOrdersRepo(db)
 	if err != nil {
 		return err
 	}
-	defer ordersRepo.CloseConnection()
 	withdrawalsRepo, err := postgres.NewPgWithdrawalsRepo(db)
 	if err != nil {
 		return err
 	}
-	defer withdrawalsRepo.CloseConnection()
 
 	//Инициализация клиента для работы с системой рассчёта баллов
 	accrualSystemClient := accrual.NewClient(accrualCalculationRouterAddr, 5*time.Second) //Таймаут 5 секунд

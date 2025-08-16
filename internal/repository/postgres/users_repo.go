@@ -83,10 +83,6 @@ func (r *PgUsersRepo) Delete(ctx context.Context, login string) error {
 	return err
 }
 
-func (r *PgUsersRepo) CloseConnection() {
-	r.db.Close(context.Background())
-}
-
 func (r *PgUsersRepo) PingDB() bool {
 	err := r.db.Ping(context.Background())
 	return err == nil

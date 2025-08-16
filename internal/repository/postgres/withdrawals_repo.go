@@ -83,10 +83,6 @@ func (r *PgWithdrawalsRepo) Delete(ctx context.Context, order string) error {
 	return err
 }
 
-func (r *PgWithdrawalsRepo) CloseConnection() {
-	r.db.Close(context.Background())
-}
-
 func (r *PgWithdrawalsRepo) PingDB() bool {
 	err := r.db.Ping(context.Background())
 	return err == nil
