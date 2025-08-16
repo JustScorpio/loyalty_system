@@ -9,6 +9,7 @@ import (
 
 	"github.com/JustScorpio/loyalty_system/internal/accrual"
 	"github.com/JustScorpio/loyalty_system/internal/customerrors"
+	dispatcher "github.com/JustScorpio/loyalty_system/internal/infrastructure/service_tasks_dispatcher"
 	"github.com/JustScorpio/loyalty_system/internal/models"
 	"github.com/JustScorpio/loyalty_system/internal/repository"
 	"github.com/JustScorpio/loyalty_system/internal/utils/auth/validation"
@@ -21,32 +22,9 @@ type LoyaltyService struct {
 	withdrawalsRepo repository.IRepository[models.Withdrawal]
 	accrualClient   *accrual.Client
 	txManager       repository.ITransactionManager
+	taskDispatcher  *dispatcher.TaskDispatcher
 
-	taskQueue     chan Task   // канал-очередь задач
 	pendingOrders chan string // Канал для новых заказов
-}
-
-type TaskType int
-
-const (
-	TaskCreateUser TaskType = iota
-	TaskGetUser
-	TaskCreateOrder
-	TaskGetUserOrders
-	TaskCreateWithdrawal
-	TaskGetUserWithdrawals
-)
-
-type Task struct {
-	Type     TaskType
-	Context  context.Context
-	Payload  interface{}
-	ResultCh chan TaskResult
-}
-
-type TaskResult struct {
-	Result interface{}
-	Err    error
 }
 
 var alreadyExistsError = customerrors.NewAlreadyExistsError(errors.New("entity already exists"))
@@ -54,86 +32,51 @@ var notActuallyAnError = customerrors.NewOkError(errors.New("")) //Its a need
 var unprocessableEntityError = customerrors.NewUnprocessableEntityError(errors.New("unprocessable entity"))
 var paymentRequiredError = customerrors.NewPaymentRequiredError(errors.New("payment required"))
 
-func NewLoyaltyService(usersRepo repository.IRepository[models.User], ordersRepo repository.IRepository[models.Order], withdrawalsRepo repository.IRepository[models.Withdrawal], accrualClient *accrual.Client, txManager repository.ITransactionManager) *LoyaltyService {
+func NewLoyaltyService(usersRepo repository.IRepository[models.User], ordersRepo repository.IRepository[models.Order], withdrawalsRepo repository.IRepository[models.Withdrawal], accrualClient *accrual.Client, txManager repository.ITransactionManager, taskDispatcher *dispatcher.TaskDispatcher) *LoyaltyService {
 	service := &LoyaltyService{
 		usersRepo:       usersRepo,
 		ordersRepo:      ordersRepo,
 		withdrawalsRepo: withdrawalsRepo,
 		accrualClient:   accrualClient,
 		txManager:       txManager,
-		taskQueue:       make(chan Task, 300),
+		taskDispatcher:  taskDispatcher,
 		pendingOrders:   make(chan string, 300),
 	}
 
-	go service.taskProcessor()
+	service.taskDispatcher.StartWorker(service.handleTask)
 	go service.ordersAccrualWorker()
 
 	return service
 }
 
-func (s *LoyaltyService) taskProcessor() {
-	for task := range s.taskQueue {
-
-		var result interface{}
-		var err error
-
-		switch task.Type {
-		case TaskCreateUser:
-			user := task.Payload.(*models.User)
-			err = s.createUser(task.Context, *user)
-		case TaskGetUser:
-			login := task.Payload.(string)
-			result, err = s.usersRepo.Get(task.Context, login)
-		case TaskCreateOrder:
-			order := task.Payload.(*models.Order)
-			err = s.createOrder(task.Context, *order)
-		case TaskGetUserOrders:
-			login := task.Payload.(string)
-			result, err = s.getUserOrders(task.Context, login)
-		case TaskCreateWithdrawal:
-			withdrawal := task.Payload.(*models.Withdrawal)
-			err = s.createWithdrawal(task.Context, *withdrawal)
-		case TaskGetUserWithdrawals:
-			login := task.Payload.(string)
-			result, err = s.getUserWithdrawals(task.Context, login)
-		}
-
-		if task.ResultCh != nil {
-			switch task.Type {
-			case TaskGetUser, TaskGetUserOrders, TaskGetUserWithdrawals:
-				task.ResultCh <- TaskResult{
-					Result: result,
-					Err:    err,
-				}
-			case TaskCreateUser, TaskCreateOrder, TaskCreateWithdrawal:
-				task.ResultCh <- TaskResult{
-					Err: err,
-				}
-			}
-			close(task.ResultCh)
-		}
+// Обработчик задач (приватный метод)
+func (s *LoyaltyService) handleTask(task dispatcher.Task) (interface{}, error) {
+	switch task.Type {
+	case dispatcher.TaskCreateUser:
+		user := task.Payload.(*models.User)
+		return nil, s.createUser(task.Context, *user)
+	case dispatcher.TaskGetUser:
+		login := task.Payload.(string)
+		return s.usersRepo.Get(task.Context, login)
+	case dispatcher.TaskCreateOrder:
+		order := task.Payload.(*models.Order)
+		return nil, s.createOrder(task.Context, *order)
+	case dispatcher.TaskGetUserOrders:
+		login := task.Payload.(string)
+		return s.getUserOrders(task.Context, login)
+	case dispatcher.TaskCreateWithdrawal:
+		withdrawal := task.Payload.(*models.Withdrawal)
+		return nil, s.createWithdrawal(task.Context, *withdrawal)
+	case dispatcher.TaskGetUserWithdrawals:
+		login := task.Payload.(string)
+		return s.getUserWithdrawals(task.Context, login)
 	}
-}
-
-// Поставить задачу в очередь
-func (s *LoyaltyService) enqueueTask(task Task) (interface{}, error) {
-	if task.ResultCh == nil {
-		task.ResultCh = make(chan TaskResult, 1)
-	}
-
-	s.taskQueue <- task
-
-	select {
-	case <-task.Context.Done():
-		return nil, task.Context.Err()
-	case res := <-task.ResultCh:
-		return res.Result, res.Err
-	}
+	return nil, fmt.Errorf("unknown task type")
 }
 
 func (s *LoyaltyService) CreateUser(ctx context.Context, newUser models.User) error {
-	_, err := s.enqueueTask(Task{
-		Type:    TaskCreateUser,
+	_, err := s.taskDispatcher.Enqueue(dispatcher.Task{
+		Type:    dispatcher.TaskCreateUser,
 		Context: ctx,
 		Payload: &newUser,
 	})
@@ -142,8 +85,8 @@ func (s *LoyaltyService) CreateUser(ctx context.Context, newUser models.User) er
 }
 
 func (s *LoyaltyService) GetUser(ctx context.Context, login string) (*models.User, error) {
-	res, err := s.enqueueTask(Task{
-		Type:    TaskGetUser,
+	res, err := s.taskDispatcher.Enqueue(dispatcher.Task{
+		Type:    dispatcher.TaskGetUser,
 		Context: ctx,
 		Payload: login,
 	})
@@ -152,8 +95,8 @@ func (s *LoyaltyService) GetUser(ctx context.Context, login string) (*models.Use
 }
 
 func (s *LoyaltyService) CreateOrder(ctx context.Context, newOrder models.Order) error {
-	_, err := s.enqueueTask(Task{
-		Type:    TaskCreateOrder,
+	_, err := s.taskDispatcher.Enqueue(dispatcher.Task{
+		Type:    dispatcher.TaskCreateOrder,
 		Context: ctx,
 		Payload: &newOrder,
 	})
@@ -162,8 +105,8 @@ func (s *LoyaltyService) CreateOrder(ctx context.Context, newOrder models.Order)
 }
 
 func (s *LoyaltyService) GetUserOrders(ctx context.Context, login string) ([]models.Order, error) {
-	res, err := s.enqueueTask(Task{
-		Type:    TaskGetUserOrders,
+	res, err := s.taskDispatcher.Enqueue(dispatcher.Task{
+		Type:    dispatcher.TaskGetUserOrders,
 		Context: ctx,
 		Payload: login,
 	})
@@ -172,8 +115,8 @@ func (s *LoyaltyService) GetUserOrders(ctx context.Context, login string) ([]mod
 }
 
 func (s *LoyaltyService) CreateWithdrawal(ctx context.Context, newWithdrawal models.Withdrawal) error {
-	_, err := s.enqueueTask(Task{
-		Type:    TaskCreateWithdrawal,
+	_, err := s.taskDispatcher.Enqueue(dispatcher.Task{
+		Type:    dispatcher.TaskCreateWithdrawal,
 		Context: ctx,
 		Payload: &newWithdrawal,
 	})
@@ -182,8 +125,8 @@ func (s *LoyaltyService) CreateWithdrawal(ctx context.Context, newWithdrawal mod
 }
 
 func (s *LoyaltyService) GetUserWithdrawals(ctx context.Context, login string) ([]models.Withdrawal, error) {
-	res, err := s.enqueueTask(Task{
-		Type:    TaskGetUserWithdrawals,
+	res, err := s.taskDispatcher.Enqueue(dispatcher.Task{
+		Type:    dispatcher.TaskGetUserWithdrawals,
 		Context: ctx,
 		Payload: login,
 	})

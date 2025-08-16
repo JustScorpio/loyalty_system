@@ -10,6 +10,7 @@ import (
 
 	"github.com/JustScorpio/loyalty_system/internal/accrual"
 	"github.com/JustScorpio/loyalty_system/internal/handlers"
+	"github.com/JustScorpio/loyalty_system/internal/infrastructure/service_tasks_dispatcher"
 	"github.com/JustScorpio/loyalty_system/internal/middleware"
 	"github.com/JustScorpio/loyalty_system/internal/repository/postgres"
 	"github.com/JustScorpio/loyalty_system/internal/services"
@@ -72,8 +73,11 @@ func run() error {
 	//Инициализация менеджера транзакций
 	txManager := postgres.NewPgxTransactionManager(db)
 
+	//Инициализация инфраструктуры (очередь задач на обработку)
+	dispatcher := service_tasks_dispatcher.NewTaskDispatcher()
+
 	// Инициализация сервисов
-	loyaltyService := services.NewLoyaltyService(usersRepo, ordersRepo, withdrawalsRepo, accrualSystemClient, txManager)
+	loyaltyService := services.NewLoyaltyService(usersRepo, ordersRepo, withdrawalsRepo, accrualSystemClient, txManager, dispatcher)
 
 	// Инициализация обработчиков
 	loyaltyHandler := handlers.NewLoyaltyHandler(loyaltyService)
