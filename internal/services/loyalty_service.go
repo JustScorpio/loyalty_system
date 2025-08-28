@@ -300,7 +300,7 @@ func (s *LoyaltyService) checkOrderStatus(orderNumber string) {
 		return
 	}
 
-	//Добавляем начисления и увеличиваем баланс паользователя в одной транзакции
+	//Добавляем начисления и увеличиваем баланс пользователя в одной транзакции
 	err = s.txManager.RunInTransaction(ctx, func(ctx context.Context) error {
 		// Обновляем заказ
 		updatedOrder := models.Order{
