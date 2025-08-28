@@ -83,7 +83,7 @@ func run() error {
 	loyaltyHandler := handlers.NewLoyaltyHandler(loyaltyService)
 
 	//Инициализация логгера
-	zapLogger, err := middleware.NewLogger("Info", true)
+	zapLogger, err := middleware.NewZapLogger("Info", true)
 	if err != nil {
 		return err
 	}

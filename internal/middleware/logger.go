@@ -9,7 +9,7 @@ import (
 )
 
 // Инициализация синглтон логера с необходимым уровнем логирования.
-func NewLogger(level string, isProd bool) (*zap.Logger, error) {
+func NewZapLogger(level string, isProd bool) (*zap.Logger, error) {
 	// преобразуем текстовый уровень логирования в zap.AtomicLevel
 	lvl, err := zap.ParseAtomicLevel(level)
 	if err != nil {
